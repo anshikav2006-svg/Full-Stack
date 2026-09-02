@@ -1,0 +1,53 @@
+.post-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 560px;
+}
+
+.post-form__row {
+  display: flex;
+  gap: 1rem;
+}
+
+.post-form__row .post-form__field {
+  flex: 1;
+}
+
+.post-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.post-form__field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.post-form__field input,
+.post-form__field textarea,
+.post-form__field select {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.post-form__field input:focus-visible,
+.post-form__field textarea:focus-visible,
+.post-form__field select:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+.post-form__field [aria-invalid='true'] {
+  border-color: #dc2626;
+}
+
+.post-form__error {
+  color: #dc2626;
+  font-size: 0.78rem;
+  margin: 0;
+}
