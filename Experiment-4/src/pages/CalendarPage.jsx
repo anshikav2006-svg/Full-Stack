@@ -1,80 +1,180 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
+import { addPost, updatePost, deletePost } from '../store/postsSlice';
 import Calendar from '../components/Calendar/Calendar';
-import PostModal from '../components/PostModal/PostModal';
-import LoadingState from '../components/LoadingState/LoadingState';
-import { fetchPosts, movePost } from '../features/posts/postSlice';
-import { showToast } from '../features/ui/uiSlice';
-import { selectAllPosts, selectPostsLoading } from '../features/posts/postSelectors';
+import CalendarControls from '../components/Calendar/CalendarControls';
+import { RenderCounterProvider } from '../components/Calendar/RenderCounter';
+import { useResetRenderCount } from '../components/Calendar/renderTracker';
+import { getWeekDays, getMonthDays, monthLabel } from '../components/Calendar/dateUtils';
+import PostList from '../components/Posts/PostList';
+import PostModal from '../components/Posts/PostModal';
+import ConfirmDialog from '../components/UI/ConfirmDialog';
+import Header from '../components/Layout/Header';
 
-/**
- * Maps Redux posts into calendar events and owns the drag-and-drop
- * scheduling flow described in the spec:
- *   1. get the post id from the drag event
- *   2. get the new date
- *   3. dispatch movePost to update Redux (immutably, via Immer)
- *   4. show a toast confirming the change
- */
-function CalendarPage() {
+const todayISO = new Date().toISOString().slice(0, 10);
+
+export default function CalendarPage() {
   const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const posts = useSelector(selectAllPosts);
-  const loading = useSelector(selectPostsLoading);
-  const [selectedPostId, setSelectedPostId] = useState(null);
 
-  useEffect(() => {
-    dispatch(fetchPosts());
-  }, [dispatch]);
+  const [baseDate, setBaseDate] = useState(() => new Date());
+  const [view, setView] = useState('week'); // 'week' (7 days) | 'month' (~30 days)
+  const [mode, setMode] = useState('optimized'); // 'optimized' | 'nonOptimized'
 
-  const handleEventClick = useCallback((postId) => {
-    setSelectedPostId(postId);
-  }, []);
+  const [modalState, setModalState] = useState({ open: false, postId: null });
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const handleDateClick = useCallback(
-    (date) => {
-      navigate('/posts/create', { state: { presetDate: date.toISOString() } });
-    },
-    [navigate]
-  );
+  const days = useMemo(() => {
+    const raw = view === 'week' ? getWeekDays(baseDate) : getMonthDays(baseDate);
+    return raw.map((d) => ({ ...d, isToday: d.date === todayISO }));
+  }, [view, baseDate]);
 
-  const handleEventDrop = useCallback(
-    (postId, newDate) => {
-      const post = posts.find((p) => p.id === postId);
-      if (!post) return;
+  function shiftPeriod(delta) {
+    setBaseDate((d) => {
+      const next = new Date(d);
+      if (view === 'week') next.setDate(next.getDate() + delta * 7);
+      else next.setMonth(next.getMonth() + delta);
+      return next;
+    });
+  }
 
-      const original = new Date(post.scheduledAt);
-      const newScheduledAt = new Date(newDate);
-      newScheduledAt.setHours(original.getHours(), original.getMinutes());
+  function openCreateModal() {
+    setModalState({ open: true, postId: null });
+  }
 
-      dispatch(movePost({ id: postId, newScheduledAt: newScheduledAt.toISOString() }));
-      dispatch(showToast({ message: `"${post.title}" rescheduled.`, type: 'success' }));
-    },
-    [dispatch, posts]
-  );
+  function openEditModal(postId) {
+    setModalState({ open: true, postId });
+  }
 
-  const selectedPost = posts.find((p) => p.id === selectedPostId) || null;
+  function closeModal() {
+    setModalState({ open: false, postId: null });
+  }
 
-  if (loading) return <LoadingState message="Loading calendar…" />;
+  function handleSave(payload) {
+    if (payload.id) {
+      dispatch(updatePost(payload));
+    } else {
+      dispatch(addPost(payload));
+    }
+    closeModal();
+  }
+
+  function handleDeleteRequest(postId) {
+    setConfirmDeleteId(postId);
+  }
+
+  function confirmDelete() {
+    dispatch(deletePost(confirmDeleteId));
+    setConfirmDeleteId(null);
+    closeModal();
+  }
 
   return (
-    <div className="page">
-      <h1>Calendar</h1>
-      <Calendar
-        posts={posts}
-        onEventClick={handleEventClick}
-        onDateClick={handleDateClick}
-        onEventDrop={handleEventDrop}
+    <RenderCounterProvider>
+      <PageBody
+        days={days}
+        view={view}
+        mode={mode}
+        monthLabel={monthLabel(baseDate)}
+        onViewChange={setView}
+        onModeChange={setMode}
+        onPrev={() => shiftPeriod(-1)}
+        onNext={() => shiftPeriod(1)}
+        onToday={() => setBaseDate(new Date())}
+        onNewPost={openCreateModal}
+        onEditPost={openEditModal}
+        onDeletePost={handleDeleteRequest}
+        modalState={modalState}
+        onCloseModal={closeModal}
+        onSave={handleSave}
+        confirmDeleteId={confirmDeleteId}
+        onCancelDelete={() => setConfirmDeleteId(null)}
+        onConfirmDelete={confirmDelete}
       />
-      {selectedPost && (
+    </RenderCounterProvider>
+  );
+}
+
+function PageBody({
+  days,
+  view,
+  mode,
+  monthLabel: label,
+  onViewChange,
+  onModeChange,
+  onPrev,
+  onNext,
+  onToday,
+  onNewPost,
+  onEditPost,
+  onDeletePost,
+  modalState,
+  onCloseModal,
+  onSave,
+  confirmDeleteId,
+  onCancelDelete,
+  onConfirmDelete,
+}) {
+  const resetRenderCount = useResetRenderCount();
+  const editingPost = usePostById(modalState.postId);
+
+  return (
+    <div className="app-shell">
+      <Header />
+
+      <main className="calendar-page">
+        <CalendarControls
+          monthLabel={label}
+          view={view}
+          onViewChange={onViewChange}
+          mode={mode}
+          onModeChange={(next) => {
+            resetRenderCount();
+            onModeChange(next);
+          }}
+          onPrev={() => {
+            resetRenderCount();
+            onPrev();
+          }}
+          onNext={() => {
+            resetRenderCount();
+            onNext();
+          }}
+          onToday={() => {
+            resetRenderCount();
+            onToday();
+          }}
+          onNewPost={onNewPost}
+          onResetCounter={resetRenderCount}
+        />
+
+        <Calendar days={days} mode={mode} onSelectPost={onEditPost} />
+
+        <PostList onEdit={onEditPost} onDelete={onDeletePost} />
+      </main>
+
+      {modalState.open && (
         <PostModal
-          post={selectedPost}
-          onClose={() => setSelectedPostId(null)}
-          onEdit={(id) => navigate(`/posts/${id}/edit`)}
+          open={modalState.open}
+          initialPost={editingPost}
+          onSave={onSave}
+          onDelete={onDeletePost}
+          onClose={onCloseModal}
         />
       )}
+
+      <ConfirmDialog
+        open={Boolean(confirmDeleteId)}
+        title="Delete this post?"
+        message="This action cannot be undone."
+        onConfirm={onConfirmDelete}
+        onCancel={onCancelDelete}
+      />
     </div>
   );
 }
 
-export default CalendarPage;
+// Small helper hook: looks up the post currently being edited (if any) from
+// the store, kept local to this page since only the modal needs it.
+function usePostById(id) {
+  return useSelector((state) => (id ? state.posts.items.find((p) => p.id === id) : null));
+}
